@@ -1,0 +1,54 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Vector store / database
+chroma_db/
+chroma_db2/
+
+# Uploaded & processed documents
+uploads/
+test_docs/
+
+# Temp / output
+output/
+*.tmp
+/tmp/
+doc_agent_*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Model weights / cache
+.cache/
+*.safetensors
+*.bin
+*.pt
+*.ckpt
+
+# Logs
+*.log
+logs/
+
+# Jupyter
+.ipynb_checkpoints/

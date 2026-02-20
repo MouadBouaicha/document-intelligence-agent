@@ -1,0 +1,22 @@
+# Document Processing
+pillow
+pymupdf
+
+# OCR (image files only — PDFs use PyMuPDF built-in text extraction)
+easyocr
+
+# LLM & Agent
+langchain
+langchain-openai
+langchain-community
+langgraph
+openai
+
+# Web Backend
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Utilities
+python-dotenv
+numpy
