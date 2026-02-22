@@ -28,140 +28,14 @@ A FastAPI + vanilla JS web app that lets you upload PDFs or images, inspect thei
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                       Browser (SPA)                         │
-│  sidebar.js   viewer.js   chunks.js   chat.js   api.js      │
-└────────────────────────┬────────────────────────────────────┘
-                         │ HTTP / SSE
-┌────────────────────────▼────────────────────────────────────┐
-│                    FastAPI  (main.py)                        │
-│                                                             │
-│  POST /api/documents/upload        ← save file, return id  │
-│  GET  /api/documents/{id}/process  ← SSE: progress events  │
-│  GET  /api/documents/{id}/pages/…/image   ← page PNG       │
-│  GET  /api/documents/{id}/pages/…/layout  ← regions JSON   │
-│  GET  /api/documents/{id}/chunks   ← ordered text blocks   │
-│  POST /api/chat                    ← SSE: agent stream      │
-└─────┬─────────────────────────┬───────────────────────────-─┘
-      │                         │
-      ▼                         ▼
-┌───────────────┐     ┌───────────────────────────────────────┐
-│ document_     │     │             agent.py                  │
-│ processor.py  │     │   LangGraph ReAct  +  MemorySaver     │
-│               │     │                                       │
-│  PDF          │     │  System prompt contains:              │
-│   │           │     │  • ALL ordered text (reading order)   │
-│   ▼           │     │  • Layout region list (id/type/page)  │
-│  PyMuPDF      │     │                                       │
-│  (fitz)       │     │  Tools (tools.py):                    │
-│   │           │     │  • AnalyzeChart(region_id, page)      │
-│   ├─ Tables   │     │  • AnalyzeTable(region_id, page)      │
-│   │  find_    │     │  • AnalyzeImage(region_id, page)      │
-│   │  tables() │     └─────────────────┬─────────────────────┘
-│   │           │                       │ tool call
-│   ├─ Figures  │             ┌─────────▼──────────┐
-│   │  get_     │             │   GPT-4o-mini VLM  │
-│   │  image_   │             │                    │
-│   │  info()   │             │  text prompt       │
-│   │  +        │             │  + cropped region  │
-│   │  get_     │             │    image (base64)  │
-│   │  drawings │             └────────────────────┘
-│   │  union-   │
-│   │  find     │   Image files (PNG/JPG/…)
-│   │  merge    │        │
-│   │           │        ▼
-│   └─ Text     │   EasyOCR → ocr.py / layout.py
-│      blocks   │
-│      (excl.   │
-│      tables/  │
-│      figures) │
-└───────┬───────┘
-        │
-        ▼
-  DocumentPage
-  ┌──────────────────────────────────────┐
-  │ page_number                          │
-  │ image           (PIL.Image)          │
-  │ layout_regions  [LayoutRegion]       │
-  │   • region_id, region_type, bbox     │
-  │   • types: text | table | figure     │
-  │ ordered_text    [{position, text}]   │
-  │ region_images   {id: {base64, …}}    │
-  └──────────────────────────────────────┘
-        │
-        ▼
-  SessionManager (in-memory, backend/session.py)
-  stores ProcessedDocument keyed by doc_id (SHA-256 hash)
-```
+![Architecture](architecture.svg)
 
-### PDF Processing Pipeline
+**Color legend:** blue = frontend · purple = API · green = document processing · pink = agent · orange = session storage · yellow = AI model
 
-```
-PDF file
-  │
-  ├─► Render page at 120 DPI → PIL Image (for viewer + VLM crops)
-  │
-  ├─► 1. TABLE DETECTION
-  │       fitz_page.find_tables()
-  │       → bbox → LayoutRegion(type="table")
-  │       → extract rows → pipe-separated text → ordered_text
-  │
-  ├─► 2. FIGURE DETECTION
-  │       get_image_info()    raster images embedded in PDF
-  │       get_drawings()      vector elements (charts, plots, diagrams)
-  │       → filter: element > 20×20 px AND not inside a table
-  │       → union-find merge with 8pt gap → single figure bbox
-  │       → filter: merged figure >= 60×60 px
-  │       → LayoutRegion(type="figure")
-  │
-  └─► 3. TEXT EXTRACTION
-          get_text("blocks")
-          → skip blocks overlapping any table or figure
-          → LayoutRegion(type="text") + OCRRegion
-          → ordered_text (preserved document reading order)
-```
-
-### Agent / Chat Flow
-
-```
-User question
-      │
-      ▼
-LangGraph ReAct agent (GPT-4o-mini)
-
-System prompt:
-  ┌────────────────────────────────────────────────┐
-  │ ## Document Text (in reading order)            │
-  │ [0] Introduction paragraph…                   │
-  │ [TABLE region_id=3]                            │
-  │ Q1 | Q2 | Q3 | Q4                             │
-  │ 100 | 120 | 95 | 140                          │
-  │ …                                              │
-  │                                                │
-  │ ## Document Layout Regions                     │
-  │   - Region 0: text  (confidence: 1.00)        │
-  │   - Region 3: table (confidence: 1.00)        │
-  │   - Region 7: figure (confidence: 1.00)       │
-  └────────────────────────────────────────────────┘
-
-  Text question  → answers directly from system prompt
-  Chart question → calls AnalyzeChart(region_id=7, page_number=1)
-                         │
-                         ▼
-                   crop region_images[7]
-                   send base64 image + prompt to GPT-4o-mini
-                         │
-                         ▼
-                   {"chart_type": "bar", "title": "…", …}
-                         │
-                   ◄─────┘
-  Agent incorporates result → final answer
-      │
-      ▼
-SSE events → browser:
-  tool_call card  →  tool_result card  →  answer bubble
-```
+**Flow summary:**
+- **Upload path** (left): Browser → FastAPI → Document Processor → Session Manager
+- **Chat path** (right): Browser → FastAPI → Agent (reads from Session) → VLM tools → GPT-4o-mini
+- **Dashed arrow**: Agent reads the processed document from Session Manager on every chat request
 
 ---
 
@@ -242,7 +116,7 @@ venv\Scripts\uvicorn.exe main:app --reload
 
 # Linux/macOS:
 uvicorn main:app --reload
-```
+```   
 
 Open `http://localhost:8000`.
 
